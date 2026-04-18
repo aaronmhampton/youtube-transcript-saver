@@ -1,2 +1,19 @@
 # youtube-transcript-saver
-Let's you install a Mac App that you can paste youtube video links into and save text or markdown video transcripts to use or keep.
+
+A desktop app to paste a YouTube URL/video ID and save transcript output locally.
+
+## MVP scope
+- URL/video ID input.
+- Format choice: `TXT`, `MD`, or `Both`.
+- Save mode:
+  - Ask for folder every time.
+  - Use a default folder.
+- Save action button.
+- Status/error line for feedback.
+
+## Out of scope for MVP
+- Clipboard auto-detect.
+- Drag/drop support.
+- Batch mode.
+- In-app summarization.
+- Browser extension integration.
