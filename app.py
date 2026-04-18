@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 from file_service import sanitize_filename, write_transcript_file
-from settings import SettingsValidationError, load_settings, save_settings
+from settings import load_settings, save_settings
 from transcript_service import (
     InvalidVideoSourceError,
     TranscriptBlockedError,
@@ -36,15 +36,8 @@ class TranscriptSaverApp:
         self.settings = self._load_settings_safe()
         self._build_ui()
 
-    def _load_settings_safe(self) -> dict[str, str]:
-        try:
-            return load_settings(SETTINGS_FILE)
-        except SettingsValidationError:
-            return {
-                "output_directory": str(Path.cwd()),
-                "output_format": "txt",
-                "save_mode": "default_folder",
-            }
+    def _load_settings_safe(self) -> dict[str, object]:
+        return load_settings(SETTINGS_FILE)
 
     def _build_ui(self) -> None:
         container = ttk.Frame(self.root, padding=12)
@@ -59,31 +52,41 @@ class TranscriptSaverApp:
         format_row = ttk.Frame(container)
         format_row.pack(fill="x", pady=(0, 12))
         ttk.Label(format_row, text="Output format").pack(anchor="w")
-        self.format_var = tk.StringVar(value=self.settings["output_format"])
-        ttk.Combobox(
+        self.format_var = tk.StringVar(
+            value=self.settings["preferred_output_format"]
+        )
+        self.format_combo = ttk.Combobox(
             format_row,
             textvariable=self.format_var,
             values=["txt", "md", "both"],
             state="readonly",
-        ).pack(anchor="w")
+        )
+        self.format_combo.pack(anchor="w")
+        self.format_combo.bind("<<ComboboxSelected>>", self._on_settings_change)
 
         save_mode_row = ttk.Frame(container)
         save_mode_row.pack(fill="x", pady=(0, 12))
         ttk.Label(save_mode_row, text="Save mode").pack(anchor="w")
-        self.save_mode_var = tk.StringVar(value=self.settings["save_mode"])
+        self.save_mode_var = tk.StringVar(
+            value=(
+                "ask_every_time"
+                if self.settings["ask_every_time"]
+                else "default_folder"
+            )
+        )
         ttk.Radiobutton(
             save_mode_row,
             text="Ask every time",
             value="ask_every_time",
             variable=self.save_mode_var,
-            command=self._toggle_directory_inputs,
+            command=self._on_save_mode_change,
         ).pack(anchor="w")
         ttk.Radiobutton(
             save_mode_row,
             text="Use default folder",
             value="default_folder",
             variable=self.save_mode_var,
-            command=self._toggle_directory_inputs,
+            command=self._on_save_mode_change,
         ).pack(anchor="w")
 
         self.default_dir_row = ttk.Frame(container)
@@ -92,7 +95,7 @@ class TranscriptSaverApp:
         dir_inner = ttk.Frame(self.default_dir_row)
         dir_inner.pack(fill="x")
         self.output_dir_var = tk.StringVar(
-            value=self.settings["output_directory"]
+            value=self.settings["default_folder"]
         )
         self.default_dir_entry = ttk.Entry(
             dir_inner,
@@ -132,8 +135,36 @@ class TranscriptSaverApp:
             )
             if selected:
                 self.output_dir_var.set(selected)
+                self._persist_settings()
+                self._set_status("Default folder updated.")
         except Exception:
             self._set_error("Unable to open folder picker.")
+
+    def _persist_settings(self) -> None:
+        save_settings(
+            SETTINGS_FILE,
+            {
+                "default_folder": self.output_dir_var.get().strip(),
+                "ask_every_time": self.save_mode_var.get().strip()
+                == "ask_every_time",
+                "preferred_output_format": self.format_var.get().strip().lower(),
+            },
+        )
+
+    def _on_save_mode_change(self) -> None:
+        self._toggle_directory_inputs()
+        try:
+            self._persist_settings()
+            self._set_status("Save mode updated.")
+        except Exception as exc:
+            self._set_error(self._status_message_for_error(exc))
+
+    def _on_settings_change(self, _event: tk.Event) -> None:
+        try:
+            self._persist_settings()
+            self._set_status("Output format updated.")
+        except Exception as exc:
+            self._set_error(self._status_message_for_error(exc))
 
     def _set_error(self, message: str) -> None:
         self.status_var.set(f"Error: {message}")
@@ -150,8 +181,6 @@ class TranscriptSaverApp:
             return "Transcript blocked or disabled for this video."
         if isinstance(exc, TranscriptRequestError):
             return "Network/request failure while loading transcript."
-        if isinstance(exc, SettingsValidationError):
-            return "Settings are invalid. Check format and folder."
         if isinstance(exc, ValueError):
             return str(exc)
         if isinstance(exc, TranscriptServiceError):
@@ -174,7 +203,7 @@ class TranscriptSaverApp:
     def _on_save(self) -> None:
         source = self.url_var.get().strip()
         output_format = self.format_var.get().strip().lower()
-        save_mode = self.save_mode_var.get().strip()
+        ask_every_time = self.save_mode_var.get().strip() == "ask_every_time"
 
         if not source:
             self._set_error("Please provide a YouTube URL or video ID.")
@@ -189,16 +218,9 @@ class TranscriptSaverApp:
                 transcript_text=transcript_text,
                 output_format=output_format,
             )
-            if save_mode == "default_folder":
+            if not ask_every_time:
                 self.output_dir_var.set(output_dir)
-            save_settings(
-                SETTINGS_FILE,
-                {
-                    "output_directory": self.output_dir_var.get().strip(),
-                    "output_format": output_format,
-                    "save_mode": save_mode,
-                },
-            )
+            self._persist_settings()
         except Exception as exc:
             if isinstance(exc, ValueError) and str(exc) == "Save canceled":
                 self._set_status("Save canceled")
