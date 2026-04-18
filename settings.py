@@ -11,13 +11,12 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "output_directory": str(Path.cwd()),
-    "output_format": "txt",
-    "save_mode": "default_folder",
+    "default_folder": str(Path.cwd()),
+    "ask_every_time": False,
+    "preferred_output_format": "txt",
 }
 
 ALLOWED_OUTPUT_FORMATS = {"txt", "md", "both"}
-ALLOWED_SAVE_MODES = {"ask_every_time", "default_folder"}
 
 
 class SettingsValidationError(ValueError):
@@ -26,54 +25,57 @@ class SettingsValidationError(ValueError):
 
 def validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize settings."""
-    output_directory = settings.get(
-        "output_directory",
-        DEFAULT_SETTINGS["output_directory"],
+    default_folder = settings.get(
+        "default_folder",
+        DEFAULT_SETTINGS["default_folder"],
     )
-    output_format = settings.get(
-        "output_format",
-        DEFAULT_SETTINGS["output_format"],
+    ask_every_time = settings.get(
+        "ask_every_time",
+        DEFAULT_SETTINGS["ask_every_time"],
     )
-    save_mode = settings.get("save_mode", DEFAULT_SETTINGS["save_mode"])
+    preferred_output_format = settings.get(
+        "preferred_output_format",
+        DEFAULT_SETTINGS["preferred_output_format"],
+    )
 
-    if not isinstance(output_directory, str) or not output_directory.strip():
+    if not isinstance(default_folder, str) or not default_folder.strip():
         raise SettingsValidationError(
-            "'output_directory' must be a non-empty string"
+            "'default_folder' must be a non-empty string"
         )
 
-    if output_format not in ALLOWED_OUTPUT_FORMATS:
+    if not isinstance(ask_every_time, bool):
+        raise SettingsValidationError("'ask_every_time' must be a boolean")
+
+    if preferred_output_format not in ALLOWED_OUTPUT_FORMATS:
         allowed = ", ".join(sorted(ALLOWED_OUTPUT_FORMATS))
         raise SettingsValidationError(
-            f"'output_format' must be one of: {allowed}"
-        )
-
-    if save_mode not in ALLOWED_SAVE_MODES:
-        allowed = ", ".join(sorted(ALLOWED_SAVE_MODES))
-        raise SettingsValidationError(
-            f"'save_mode' must be one of: {allowed}"
+            f"'preferred_output_format' must be one of: {allowed}"
         )
 
     return {
-        "output_directory": output_directory,
-        "output_format": output_format,
-        "save_mode": save_mode,
+        "default_folder": default_folder,
+        "ask_every_time": ask_every_time,
+        "preferred_output_format": preferred_output_format,
     }
 
 
 def load_settings(settings_path: str | Path) -> dict[str, Any]:
-    """Load settings from JSON; return defaults if the file is absent."""
+    """Load settings from JSON and recover to defaults on invalid content."""
     path = Path(settings_path)
     if not path.exists():
         return DEFAULT_SETTINGS.copy()
 
-    with path.open("r", encoding="utf-8") as infile:
-        data = json.load(infile)
-
-    if not isinstance(data, dict):
-        raise SettingsValidationError("Settings JSON must contain an object")
-
-    merged = {**DEFAULT_SETTINGS, **data}
-    return validate_settings(merged)
+    try:
+        with path.open("r", encoding="utf-8") as infile:
+            data = json.load(infile)
+        if not isinstance(data, dict):
+            raise SettingsValidationError("Settings JSON must contain an object")
+        merged = {**DEFAULT_SETTINGS, **data}
+        return validate_settings(merged)
+    except (OSError, json.JSONDecodeError, SettingsValidationError):
+        recovered = DEFAULT_SETTINGS.copy()
+        save_settings(path, recovered)
+        return recovered
 
 
 def save_settings(settings_path: str | Path, settings: dict[str, Any]) -> None:
