@@ -13,9 +13,11 @@ from typing import Any
 DEFAULT_SETTINGS: dict[str, Any] = {
     "output_directory": str(Path.cwd()),
     "output_format": "txt",
+    "save_mode": "default_folder",
 }
 
-ALLOWED_OUTPUT_FORMATS = {"txt", "md"}
+ALLOWED_OUTPUT_FORMATS = {"txt", "md", "both"}
+ALLOWED_SAVE_MODES = {"ask_every_time", "default_folder"}
 
 
 class SettingsValidationError(ValueError):
@@ -32,6 +34,7 @@ def validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "output_format",
         DEFAULT_SETTINGS["output_format"],
     )
+    save_mode = settings.get("save_mode", DEFAULT_SETTINGS["save_mode"])
 
     if not isinstance(output_directory, str) or not output_directory.strip():
         raise SettingsValidationError(
@@ -44,9 +47,16 @@ def validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
             f"'output_format' must be one of: {allowed}"
         )
 
+    if save_mode not in ALLOWED_SAVE_MODES:
+        allowed = ", ".join(sorted(ALLOWED_SAVE_MODES))
+        raise SettingsValidationError(
+            f"'save_mode' must be one of: {allowed}"
+        )
+
     return {
         "output_directory": output_directory,
         "output_format": output_format,
+        "save_mode": save_mode,
     }
 
 

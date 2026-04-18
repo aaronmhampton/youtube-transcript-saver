@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 from file_service import sanitize_filename, write_transcript_file
 from settings import SettingsValidationError, load_settings, save_settings
@@ -24,7 +24,7 @@ class TranscriptSaverApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("YouTube Transcript Saver")
-        self.root.geometry("700x480")
+        self.root.geometry("700x320")
 
         self.settings = self._load_settings_safe()
         self._build_ui()
@@ -36,6 +36,7 @@ class TranscriptSaverApp:
             return {
                 "output_directory": str(Path.cwd()),
                 "output_format": "txt",
+                "save_mode": "default_folder",
             }
 
     def _build_ui(self) -> None:
@@ -48,24 +49,6 @@ class TranscriptSaverApp:
             fill="x", pady=(0, 12)
         )
 
-        output_row = ttk.Frame(container)
-        output_row.pack(fill="x", pady=(0, 12))
-        ttk.Label(output_row, text="Output directory").pack(anchor="w")
-        dir_inner = ttk.Frame(output_row)
-        dir_inner.pack(fill="x")
-        self.output_dir_var = tk.StringVar(
-            value=self.settings["output_directory"]
-        )
-        ttk.Entry(
-            dir_inner,
-            textvariable=self.output_dir_var,
-        ).pack(side="left", fill="x", expand=True)
-        ttk.Button(
-            dir_inner,
-            text="Browse",
-            command=self._choose_directory,
-        ).pack(side="left", padx=(8, 0))
-
         format_row = ttk.Frame(container)
         format_row.pack(fill="x", pady=(0, 12))
         ttk.Label(format_row, text="Output format").pack(anchor="w")
@@ -73,20 +56,67 @@ class TranscriptSaverApp:
         ttk.Combobox(
             format_row,
             textvariable=self.format_var,
-            values=["txt", "md"],
+            values=["txt", "md", "both"],
             state="readonly",
         ).pack(anchor="w")
 
+        save_mode_row = ttk.Frame(container)
+        save_mode_row.pack(fill="x", pady=(0, 12))
+        ttk.Label(save_mode_row, text="Save mode").pack(anchor="w")
+        self.save_mode_var = tk.StringVar(value=self.settings["save_mode"])
+        ttk.Radiobutton(
+            save_mode_row,
+            text="Ask every time",
+            value="ask_every_time",
+            variable=self.save_mode_var,
+            command=self._toggle_directory_inputs,
+        ).pack(anchor="w")
+        ttk.Radiobutton(
+            save_mode_row,
+            text="Use default folder",
+            value="default_folder",
+            variable=self.save_mode_var,
+            command=self._toggle_directory_inputs,
+        ).pack(anchor="w")
+
+        self.default_dir_row = ttk.Frame(container)
+        self.default_dir_row.pack(fill="x", pady=(0, 12))
+        ttk.Label(self.default_dir_row, text="Default folder").pack(anchor="w")
+        dir_inner = ttk.Frame(self.default_dir_row)
+        dir_inner.pack(fill="x")
+        self.output_dir_var = tk.StringVar(
+            value=self.settings["output_directory"]
+        )
+        self.default_dir_entry = ttk.Entry(
+            dir_inner,
+            textvariable=self.output_dir_var,
+        )
+        self.default_dir_entry.pack(side="left", fill="x", expand=True)
+        self.default_dir_button = ttk.Button(
+            dir_inner,
+            text="Browse",
+            command=self._choose_directory,
+        )
+        self.default_dir_button.pack(side="left", padx=(8, 0))
+
         self.save_button = ttk.Button(
             container,
-            text="Fetch + Save Transcript",
+            text="Save Transcript",
             command=self._on_save,
         )
         self.save_button.pack(anchor="w", pady=(0, 12))
 
-        ttk.Label(container, text="Transcript preview").pack(anchor="w")
-        self.preview_text = tk.Text(container, wrap="word", height=14)
-        self.preview_text.pack(fill="both", expand=True)
+        self.status_var = tk.StringVar(value="Ready")
+        self.status_label = ttk.Label(container, textvariable=self.status_var)
+        self.status_label.pack(anchor="w")
+
+        self._toggle_directory_inputs()
+
+    def _toggle_directory_inputs(self) -> None:
+        using_default = self.save_mode_var.get() == "default_folder"
+        state = "normal" if using_default else "disabled"
+        self.default_dir_entry.config(state=state)
+        self.default_dir_button.config(state=state)
 
     def _choose_directory(self) -> None:
         selected = filedialog.askdirectory(
@@ -95,38 +125,51 @@ class TranscriptSaverApp:
         if selected:
             self.output_dir_var.set(selected)
 
+    def _set_error(self, message: str) -> None:
+        self.status_var.set(f"Error: {message}")
+
+    def _set_status(self, message: str) -> None:
+        self.status_var.set(message)
+
+    def _resolve_output_directory(self) -> str:
+        save_mode = self.save_mode_var.get().strip()
+        if save_mode == "ask_every_time":
+            selected = filedialog.askdirectory(initialdir=str(Path.cwd()))
+            if not selected:
+                raise ValueError("Save cancelled: no folder selected.")
+            return selected
+
+        output_dir = self.output_dir_var.get().strip()
+        if not output_dir:
+            raise ValueError("Please choose a default folder.")
+        return output_dir
+
     def _on_save(self) -> None:
         source = self.url_var.get().strip()
-        output_dir = self.output_dir_var.get().strip()
         output_format = self.format_var.get().strip().lower()
+        save_mode = self.save_mode_var.get().strip()
 
         if not source:
-            messagebox.showerror(
-                "Missing input",
-                "Please provide a YouTube URL or video ID.",
-            )
-            return
-
-        if not output_dir:
-            messagebox.showerror(
-                "Missing output directory",
-                "Please choose an output directory.",
-            )
+            self._set_error("Please provide a YouTube URL or video ID.")
             return
 
         try:
+            output_dir = self._resolve_output_directory()
             video_id, transcript_text = fetch_transcript_text(source)
-            file_path = write_transcript_file(
+            file_paths = write_transcript_file(
                 output_directory=output_dir,
                 filename_base=sanitize_filename(video_id),
                 transcript_text=transcript_text,
                 output_format=output_format,
             )
+            if save_mode == "default_folder":
+                self.output_dir_var.set(output_dir)
             save_settings(
                 SETTINGS_FILE,
                 {
-                    "output_directory": output_dir,
+                    "output_directory": self.output_dir_var.get().strip(),
                     "output_format": output_format,
+                    "save_mode": save_mode,
                 },
             )
         except (
@@ -134,12 +177,11 @@ class TranscriptSaverApp:
             ValueError,
             SettingsValidationError,
         ) as exc:
-            messagebox.showerror("Error", str(exc))
+            self._set_error(str(exc))
             return
 
-        self.preview_text.delete("1.0", tk.END)
-        self.preview_text.insert(tk.END, transcript_text)
-        messagebox.showinfo("Saved", f"Transcript saved to:\n{file_path}")
+        saved_list = ", ".join(str(path) for path in file_paths)
+        self._set_status(f"Saved: {saved_list}")
 
 
 def main() -> None:
