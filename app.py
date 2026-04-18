@@ -13,7 +13,14 @@ from tkinter import filedialog, ttk
 
 from file_service import sanitize_filename, write_transcript_file
 from settings import SettingsValidationError, load_settings, save_settings
-from transcript_service import TranscriptServiceError, fetch_transcript_text
+from transcript_service import (
+    InvalidVideoSourceError,
+    TranscriptBlockedError,
+    TranscriptRequestError,
+    TranscriptServiceError,
+    TranscriptUnavailableError,
+    fetch_transcript_text,
+)
 
 SETTINGS_FILE = Path("settings.json")
 
@@ -119,11 +126,14 @@ class TranscriptSaverApp:
         self.default_dir_button.config(state=state)
 
     def _choose_directory(self) -> None:
-        selected = filedialog.askdirectory(
-            initialdir=self.output_dir_var.get() or str(Path.cwd())
-        )
-        if selected:
-            self.output_dir_var.set(selected)
+        try:
+            selected = filedialog.askdirectory(
+                initialdir=self.output_dir_var.get() or str(Path.cwd())
+            )
+            if selected:
+                self.output_dir_var.set(selected)
+        except Exception:
+            self._set_error("Unable to open folder picker.")
 
     def _set_error(self, message: str) -> None:
         self.status_var.set(f"Error: {message}")
@@ -131,12 +141,29 @@ class TranscriptSaverApp:
     def _set_status(self, message: str) -> None:
         self.status_var.set(message)
 
+    def _status_message_for_error(self, exc: Exception) -> str:
+        if isinstance(exc, InvalidVideoSourceError):
+            return "Enter a valid YouTube URL or video ID."
+        if isinstance(exc, TranscriptUnavailableError):
+            return "Transcript unavailable for this video."
+        if isinstance(exc, TranscriptBlockedError):
+            return "Transcript blocked or disabled for this video."
+        if isinstance(exc, TranscriptRequestError):
+            return "Network/request failure while loading transcript."
+        if isinstance(exc, SettingsValidationError):
+            return "Settings are invalid. Check format and folder."
+        if isinstance(exc, ValueError):
+            return str(exc)
+        if isinstance(exc, TranscriptServiceError):
+            return "Transcript could not be loaded."
+        return "Unexpected error."
+
     def _resolve_output_directory(self) -> str:
         save_mode = self.save_mode_var.get().strip()
         if save_mode == "ask_every_time":
             selected = filedialog.askdirectory(initialdir=str(Path.cwd()))
             if not selected:
-                raise ValueError("Save cancelled: no folder selected.")
+                raise ValueError("Save canceled")
             return selected
 
         output_dir = self.output_dir_var.get().strip()
@@ -172,12 +199,11 @@ class TranscriptSaverApp:
                     "save_mode": save_mode,
                 },
             )
-        except (
-            TranscriptServiceError,
-            ValueError,
-            SettingsValidationError,
-        ) as exc:
-            self._set_error(str(exc))
+        except Exception as exc:
+            if isinstance(exc, ValueError) and str(exc) == "Save canceled":
+                self._set_status("Save canceled")
+                return
+            self._set_error(self._status_message_for_error(exc))
             return
 
         saved_list = ", ".join(str(path) for path in file_paths)
